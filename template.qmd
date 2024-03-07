@@ -72,11 +72,13 @@ end
 
 house = let
     haz_fl_dept = CSV.read("data/haz_fl_dept.csv", DataFrame) # read in the file
-    desc = "one story, Contents, fresh water, short duration"
-    row = @rsubset(haz_fl_dept, :Description == desc)[1, :] # select the row I want
-    area = 500u"ft^2"
-    height_above_gauge = 10u"ft"
-    House(row; area=area, height_above_gauge=height_above_gauge, value_usd=250_000)
+    desc = "two story, no basement, Structure"
+    occ = "RES1"
+    src = "USACE - Galveston"
+    row = @rsubset(haz_fl_dept, :Description == desc, :Occupancy == occ, :Source == src)[1, :] 
+    area = 881u"ft^2"
+    height_above_gauge = 4*u"ft"
+    House(row; area=area, height_above_gauge=height_above_gauge, value_usd=194_456)
 end
 
 p = ModelParams(; house=house, years=2024:2083)
@@ -87,8 +89,14 @@ function draw_surge_distribution()
     ξ = rand(Normal(0.1, 0.05))
     return GeneralizedExtremeValue(μ, σ, ξ)
 end
+
 function draw_discount_rate()
-    return 0.0
+    draw = rand(Normal(0.04, 0.02))
+    if draw < 0
+        return 0.001
+    else
+        return draw
+    end
 end
 
 N_SOW = 100
@@ -264,25 +272,24 @@ We'll keep the number of SOWs used for optimization relatively small, and then w
 
 ```{julia}
 # Set your random seed to 2024 so that you always get the same answers when you re-run your code.
-Random.seed!(2024)
+Random.seed!(202)
 
 # Generate `N_SOW = 100_000` sows at random as in the previous lab and/or as in the template code provided above.
 N_SOW = 100_000
 sows = [
-    SOW(rand(slr_scenarios), draw_surge_distribution(), draw_discount_rate()) for
-    _ in 1:N_SOW
-] 
+    SOW(rand(slr_scenarios), draw_surge_distribution(), draw_discount_rate()) for _ in 1:N_SOW
+    ] 
 
-# Pick the first `N_SOW_opt = 10` of these sows to use for optimization. You can (and should!!) increase this number once you have a working solution, but we'll use just a few to make sure everything is working.
-N_SOW_opt = 100
+# Pick the first `N_SOW_opt = 10` of these sows to use for optimization.
+N_SOW_opt = 10
 sows_opt = sows[1:N_SOW_opt]
 
 ```
 
 ```{julia}
-function objective_function(a::AbstractFloat)
+function objective_function(a::Vector{Float64})
     # Convert the input scalar to an `Action`
-    action = Action(a*u"ft")
+    action = Action(a[1]*u"ft")
 
     # Call `run_sim` on each of the `N_SOW_opt` sows and the elevation to get the expected value of the objective function.
     expected_values = [run_sim(action, sow, p) for sow in sows_opt]
@@ -291,7 +298,8 @@ function objective_function(a::AbstractFloat)
     return -sum(expected_values)
 end
 
-objective_function(6.0)
+objective_function(4.0)
+
 ```
 
 ```{julia}
@@ -306,7 +314,8 @@ result = optimize(objective_function, bounds, algorithm)
 # Validate the result by plotting the objective function for a range of elevations (from 0 to 14 ft) using all your SOWs.
 elevations = range(0; stop=14, length=100)
 objective_values = [objective_function(e) for e in elevations]
-plot(elevations, objective_values; xlabel="Elevation (ft)", ylabel="Objective function value", label="", title="Objective function for different elevations")
+plot(elevations, objective_values; xlabel="Elevation (ft)", ylabel="Objective function value", label="", title="Objective function for different elevations, 
+Number of SOWs = $N_SOW_opt")
 ```
 
 1. Run the optimization with the objective function and see what elevation it recommends.
