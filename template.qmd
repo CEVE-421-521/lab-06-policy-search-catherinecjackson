@@ -211,7 +211,7 @@ Below, the optimization can now be run on the function, objective_function.  We 
 
 ```{julia}
 bounds = boxconstraints(; lb=0.0, ub=14.0) #<1>
-options = Options(; time_limit=60.0) #<2>
+options = Options(; time_limit=120.0) #<2>
 algorithm = ECA(; options=options) #<3>
 result = optimize(objective_function, bounds, algorithm) #<4>
 ```
