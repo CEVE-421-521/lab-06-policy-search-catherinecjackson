@@ -38,6 +38,7 @@ function run_sim(a::Action, sow::SOW, p::ModelParams)
     years_idx = p.years .- minimum(p.years)
     discount_fracs = (1 - sow.discount_rate) .^ years_idx
     ead_npv = sum(eads .* discount_fracs)
+
     return -(ead_npv + construction_cost)
 end
 

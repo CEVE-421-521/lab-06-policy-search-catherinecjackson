@@ -1,6 +1,6 @@
 ---
 title: "Lab 6: Policy Search"
-author: "Catherine Jackson"
+author: "Catherine Jackson (ccj3)"
 jupyter: julia-1.10
 date: 2024-03-01
 week: 7
@@ -42,26 +42,21 @@ using Unitful
 Plots.default(; margin=5Plots.mm)
 ```
 
-# Problem description
+# Lab 06 Background
 
-In lab 5, you used exploratory modeling to consider how different plausible scenarios might affect the flood risk for a house.
-In this lab, we will use policy search to find the "optimal" elevation for the house.
+In lab-05, we demonstrated that a given decision performs differently under a range of plausible scenarios.  Consider how raising your house 10 feet will prevent a relatively high level of damages if the storm surge is high, but it might cost you more than it saves if future storm surge is low.
 
-## Decision variables
+However, this complicates analysis when scientists are uncertain what the future scenarios might look like.  In this way, it is necessary to *optimize over an uncertain future*. The best choice can be found by considering a range of possible future scenarios and choosing the decision that performs best on average.
 
-We're going to focus on a single decision variable: how high to elevate a house.
-Of course, running a full optimization here is probably overkill, as @zarekarizi_suboptimal:2020 showed that a brute force search over all possible elevations is sufficient to find a good solution.
-However, we want to build up some optimization expertise to help us with more complex problems in the future.
+## Decision Variable
 
-We will use a continuous decision variable, the height of the house above the ground.
-We limit it between 0 and 14 feet.
+Given that this lab optimizes over a range of uncertian futures, our decision variable is the elevation of the house itself. As mentioned in the lab assignment, this problem is simple enough that we can "brute force" serch over our possible elevations (e.g. 0 to 14 feet) to find the best solution.  
 
-## Objective function
+## State(s) of the World
 
-For now, we'll keep the same objective function that we've been using: net present value, considering both the cost of heightening the house and the discounted expected costs of future flood damage.
+In addition to the decision varible, we need to test over many different states of the world (e.g. different sea level rise outcomes, different storm surge values, and different discount rates).  The code below sets up slr_scenarios (the different plausible sea level rise scenarios), draw_surge_distribution (a function that generates a random surge GEV), draw_discount_rate (a function which draws a discount rate from a normal distribution), and the parameters of the house itself.
 
-As you know, it's not enough to state the objective function, however.
-We also need to consider the state(s) of the world over which we will optimize.
+At the end, the code draws N_SOW state of the worlds and saves them as sows.
 
 ```{julia}
 #| output: false
@@ -103,37 +98,14 @@ N_SOW = 100
 sows = [
     SOW(rand(slr_scenarios), draw_surge_distribution(), draw_discount_rate()) for
     _ in 1:N_SOW
-] # for 10 SOWs
+] 
 ```
 
-### More-efficient storm surge sampling
+## Trapezoidal Integration vs. Monte Carlo
 
-Thus far, we have estimated annual expected losses in a particular year using a simple Monte Carlo estimate:
-$$
-\mathbb{E}[f(x)] = \int p(x) f(x) \, dx \quad \approx  \frac{1}{N} \sum_{i=1}^N f(x_i) \quad \text{where } x_i \sim p(x)
-$$
-where, in our context, $x$ is the flood depth and $f(x)$ is the depth-damage function.
-However, this is not the most efficient way to estimate the expected value of a function, because it requires a lot of samples from $p(x)$ to get a good estimate.
-This will invariably result in a lot of samples very near each other in the middle of the distribution, where the function is relatively flat, and few samples in the tails, where the function is steep.
+We've been estimating yearly expected losses using a Monte Carlo method, which both takes many samples and is not as efficient. Using trapezoidal integration is a better methodology in that it is more accurate and takes less samples.
 
-A more efficient way to estimate the expected value of a function is to use [trapezoidal integration](https://en.wikipedia.org/wiki/Trapezoidal_rule).
-This is a simple idea: we divide the domain of the function into $n$ intervals, and then estimate the area under the curve in each interval using the trapezoidal rule:
-$$
-\int_{a}^b f(x) \, dx \approx \sum_{i=1}^{n-1} \frac{f(x_i) + f(x_{i+1})}{2} (x_{i+1} - x_i)
-$$
-where $x_i$ are the $n$ points at which we evaluate the function between $a$ and $b$.
-If we want to estimate an expectation, we need to multiply this by the probability of each interval, which we can estimate using the empirical distribution of our samples.
-$$
-\mathbb{E}[f(x)] \approx \sum_{i=1}^{n-1} \frac{p(x_i)f(x_i) + p(x_{i+1}) f(x_{i+1})}{2} (x_{i+1} - x_i).
-$$
-One important note here is that an expectation is infinite, but we truncate the integral at some point.
-We will use the 0.0005 and 0.9995 quantiles of the distribution of flood depths to define the bounds of the integral, which introduces some (here very small) error.
-
-
-### Validation
-
-We can make sure that we get the same thing by comparing our result to a simple Monte Carlo estimate using 25,000 samples.
-We can also time how long they take using the `@time` macro (which is actually not a great way to evaluate code -- a better approach uses the [BenchmarkTools](https://juliaci.github.io/BenchmarkTools.jl/stable/) package but we won't go into this here -- instead we run use `@time` the _second_ time we call each function, which gives a better estimate than timing it the first time).
+Below, this new method is tested against the old Monte Carlo methodology.  The code below shows that the new run_sim can finish with around 150 evaluations in a year, while run_sim_old takes around 10,000.
 
 ```{julia}
 a = Action(3.0u"ft")
@@ -142,103 +114,46 @@ _ = run_sim(a, sow, p)
 @time run_sim(a, sow, p)
 ```
 
-This is much faster than the old method, but gives us the same result
-
 ```{julia}
 _ = HouseElevation.run_sim_old(a, sow, p)
 @time HouseElevation.run_sim_old(a, sow, p)
 ```
 
-This makes our function a lot faster to run!
-We only have to evalute our function about 150 times per year, rather than 10000.
-
 ## Metaheuristics.jl
 
-We are attempting to solve a single-objective optimization problem that is likely nonlinear and nonconvex.
-We will use the [Metaheuristics.jl](https://jmejia8.github.io/Metaheuristics.jl/stable/) package to do this.
-This package implements a number of optimization algorithms, including genetic algorithms, that are well-suited to this type of problem.
-Let's follow a a quick overview from [the docs](https://jmejia8.github.io/Metaheuristics.jl/stable/).
+Next, the lab instructions discussed the use of a package, Metaheuristics.jl. This package is frequently used to solve optimization problems, including different optimization algorithms (including genetic algorithms). It gives an example of a function to optimize.
 
-Let's say we want to minimize the following function:
 $$
 f(\mathbf{x}) = 10D + \sum_{i=1}^{D} \left( x_i^2 - 10 \cos(2 \pi x_i) \right)
 $$
 where $\mathbf{x} \in [-5, 5]^D$, i.e., $-5 \leq x_i \leq 5$ for $i = 1, \ldots, D$.
-We can plot it for $D=2$:
+
+The code below shows, visually, how the function values can be minimized.
 
 ```{julia}
 f(x) = 10length(x) + sum(x .^ 2 - 10cos.(2π * x))
 let
-    # Generate a grid of points for the surface plot
     x = range(-5; stop=5, length=1000)
     y = range(-5; stop=5, length=1000)
     z = [f([i, j]) for i in x, j in y]
-
-    # Create the surface plot
     surface(
         x, y, z; xlabel="x1", ylabel="x2", zlabel="f(x)", title=L"Minimize $f(x)$ for $D=2$"
     )
 end
 ```
 
-Let's minimize it with $D=10$.
-We need to define bounds of the optimization, which constrains the search space for the decisino variable.
+This section also demonstrates other key features of the package.  First, **boxconstraints** is used to define the bounds of the decision variable, so we know that when we do our optimization later we use 0 to 14.  It also shows that Metaheuristics.jl is called with **optimize(funtion,bounds)**.  Furthermore, **minimizer** can be used to find which decision variable produced the minimum.  Additional options include adding a time limit and choosing an algorithm.
+
+In addition, a random seed sets up the "random" path taken through optimization, so if we set a specific seed we can get the same result every time we run the optimization.  This is useful for reproducibility.
 
 ```{julia}
 D = 10
 bounds = boxconstraints(; lb=-5ones(D), ub=5ones(D))
-```
-
-We can throw this straight into the `optimize` function:
-
-```{julia}
 result = optimize(f, bounds)
-```
-
-We can view the minimum of the objective function with
-
-```{julia}
-minimum(result)
-```
-
-and the value of the decision variable that achieves that minimum with:
-
-```{julia}
 minimizer(result)
-```
-
-Often, however, some additional specifications are needed.
-In our case, we'll want to add some specifications for the optimizer.
-For example, we can set a time limit (in seconds) for the optimization -- this may cause it to terminate before convergence!
-Another useful option is `f_tol_rel`, which sets the relative tolerance for the objective function value.
-For our case study, we'll want a very loose tolerance (high value of `f_tol_rel`) because the function we are minimizing has results on the order of tens of thousands of dollars.
-For this tutorial, we'll use the default value of `f_tol_rel`.
-
-```{julia}
 options = Options(; time_limit=10.0)
-```
-
-To use options, we have to choose an algorithm.
-See list of algorithms [here](https://jmejia8.github.io/Metaheuristics.jl/stable/algorithms/).
-The `ECA` algorithm is suggested as a default, so we'll use that.
-
-```{julia}
 algorithm = ECA(; options=options)
-```
-
-Before we run the optimization, let's set a random seed.
-This will make our results more reproducible.
-We can then vary the seed to see how sensitive our results are to the random seed.
-
-```{julia}
 Random.seed!(918)
-result = optimize(f, bounds, algorithm)
-```
-
-and we can check if we get a different result in the next iteration
-
-```{julia}
-Random.seed!(952)
 result = optimize(f, bounds, algorithm)
 ```
 
@@ -272,7 +187,7 @@ We'll keep the number of SOWs used for optimization relatively small, and then w
 
 ```{julia}
 # Set your random seed to 2024 so that you always get the same answers when you re-run your code.
-Random.seed!(202)
+Random.seed!(2019)
 
 # Generate `N_SOW = 100_000` sows at random as in the previous lab and/or as in the template code provided above.
 N_SOW = 100_000
@@ -281,9 +196,10 @@ sows = [
     ] 
 
 # Pick the first `N_SOW_opt = 10` of these sows to use for optimization.
-N_SOW_opt = 10
+N_SOW_opt = 1
 sows_opt = sows[1:N_SOW_opt]
 
+display(sows_opt)
 ```
 
 ```{julia}
@@ -293,6 +209,8 @@ function objective_function(a::Vector{Float64})
 
     # Call `run_sim` on each of the `N_SOW_opt` sows and the elevation to get the expected value of the objective function.
     expected_values = [run_sim(action, sow, p) for sow in sows_opt]
+
+    display(expected_values)
 
     # Return the negative of the sum of these expected values (since we are minimizing).
     return -sum(expected_values)
@@ -305,7 +223,7 @@ objective_function(4.0)
 ```{julia}
 # Run the optimization with the objective function and see what elevation it recommends.
 bounds = boxconstraints(; lb=0.0, ub=14.0)
-options = Options(; time_limit=10.0)
+options = Options(; time_limit=60.0)
 algorithm = ECA(; options=options)
 result = optimize(objective_function, bounds, algorithm)
 ```
