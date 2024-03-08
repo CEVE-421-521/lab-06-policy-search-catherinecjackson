@@ -19,7 +19,7 @@ format:
 date-format: "ddd., MMM. D"
 
 execute: 
-  cache: true
+  # cache: true
   freeze: auto
 
 bibliography: references.bib
@@ -177,7 +177,7 @@ N_SOW = 100_000 ; #<2>
 sows = [
     SOW(rand(slr_scenarios), draw_surge_distribution(), draw_discount_rate()) for _ in 1:N_SOW
     ] ;
-N_SOW_opt = 500 ; #<3>
+N_SOW_opt = 300 ; #<3>
 sows_opt = sows[1:N_SOW_opt] ;
 ```
 
@@ -190,6 +190,14 @@ Here we set up the objective function.
 3. We return the sum of the expected values.  Think of this as the cost of damages in every state of the world added together.  It measures how well the action performed across the board.
 
 ```{julia}
+function objective_function_scalar(a::Float64)
+    action = Action(a*u"ft") #<1>
+
+    expected_values = [run_sim(action, sow, p) for sow in sows_opt] #<2>
+
+    return -sum(expected_values) #<3>
+end
+
 function objective_function(a::Vector{Float64})
     action = Action(a[1]*u"ft") #<1>
 
@@ -226,7 +234,7 @@ The code below provides a sanity check for the optimization.  It plots the objec
 
 ```{julia}
 elevations = range(0; stop=14, length=100) #<1>
-objective_values = [objective_function(e) for e in elevations] #<2>
+objective_values = [objective_function_scalar(e) for e in elevations] #<2>
 plot(elevations, objective_values; xlabel="Elevation (ft)", ylabel="Objective function value", label="", title="Objective function for different elevations, 
 Number of SOWs = $N_SOW_opt") #<3>
 ```
